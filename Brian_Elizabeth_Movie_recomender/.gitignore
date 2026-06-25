@@ -2,3 +2,6 @@ saved_models/
 ml-latest/
 ml-32m-README.html
 generate_report.py
+svd_training_progress.png
+data_exploration_comprehensive.png
+evaluation_metrics.png

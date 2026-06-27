@@ -20,6 +20,56 @@ MODELS_DIR = 'saved_models'
 os.makedirs(MODELS_DIR, exist_ok=True)
 
 # ============================================
+# GLOBAL DATA & LAZY LOADING
+# ============================================
+train_user_item_matrix = None
+movies_df = None
+svd_model = None
+hybrid_model = None
+
+def load_resources():
+    global train_user_item_matrix, movies_df, svd_model, hybrid_model
+    
+    # Load movies dataframe
+    if movies_df is None:
+        try:
+            movies_df = pd.read_csv('ml-latest/movies.csv')
+            print("📂 Loaded movies metadata from ml-latest/movies.csv")
+        except FileNotFoundError:
+            n_movies = 50
+            movie_titles = [f"Movie {i}" for i in range(1, n_movies + 1)]
+            genres = ['Action', 'Comedy', 'Drama', 'Horror', 'Sci-Fi', 'Romance', 'Thriller']
+            np.random.seed(42)
+            movie_genres = [np.random.choice(genres) for _ in range(n_movies)]
+            movies_df = pd.DataFrame({
+                'movieId': range(1, n_movies + 1),
+                'title': movie_titles,
+                'genres': movie_genres
+            })
+            print("⚠️ Movies CSV not found. Using sample fallback data.")
+
+    # Load SVD model
+    if svd_model is None:
+        svd_model = load_model('svd_recommender')
+        if svd_model is not None and train_user_item_matrix is None:
+            train_user_item_matrix = svd_model.user_item_matrix
+
+    # Load Hybrid model
+    if hybrid_model is None:
+        hybrid_model = load_model('hybrid_recommender')
+        if hybrid_model is not None and train_user_item_matrix is None:
+            train_user_item_matrix = hybrid_model.user_cf.user_item_matrix
+
+    # Fallback user-item matrix
+    if train_user_item_matrix is None:
+        train_user_item_matrix = load_user_item_matrix('user_item_matrix')
+        if train_user_item_matrix is None:
+            ratings_df, movies_df_temp = load_movielens_data()
+            _, user_item_matrix, _ = preprocess_data(ratings_df)
+            train_user_item_matrix = user_item_matrix
+
+
+# ============================================
 # MODEL PERSISTENCE FUNCTIONS
 # ============================================
 def save_model(model, model_name):
@@ -96,9 +146,10 @@ def list_saved_models():
 # ============================================
 # PART A: Data Exploration (10 Marks)
 # ============================================
-print("="*60)
-print("PART A: DATA EXPLORATION")
-print("="*60)
+if __name__ == '__main__':
+    print("="*60)
+    print("PART A: DATA EXPLORATION")
+    print("="*60)
 
 # Load MovieLens data from the ml-latest dataset
 # Dataset downloaded from: https://files.grouplens.org/datasets/movielens/ml-latest.zip
@@ -150,77 +201,79 @@ def load_movielens_data():
         ratings_df = ratings_df.drop_duplicates(subset=['userId', 'movieId'])
         return ratings_df, movies_df
 
-# Load data
-ratings_df, movies_df = load_movielens_data()
+if __name__ == '__main__':
+    # Load data
+    ratings_df, movies_df = load_movielens_data()
 
-print(f"\n📊 Dataset Statistics:")
-print(f"   Number of users: {ratings_df['userId'].nunique()}")
-print(f"   Number of movies: {ratings_df['movieId'].nunique()}")
-print(f"   Number of ratings: {len(ratings_df)}")
-print(f"   Rating scale: {ratings_df['rating'].min():.1f} - {ratings_df['rating'].max():.1f}")
-sparsity = (1 - len(ratings_df) / (ratings_df['userId'].nunique() * ratings_df['movieId'].nunique())) * 100
-print(f"   Sparsity: {sparsity:.2f}%")
+    print(f"\n📊 Dataset Statistics:")
+    print(f"   Number of users: {ratings_df['userId'].nunique()}")
+    print(f"   Number of movies: {ratings_df['movieId'].nunique()}")
+    print(f"   Number of ratings: {len(ratings_df)}")
+    print(f"   Rating scale: {ratings_df['rating'].min():.1f} - {ratings_df['rating'].max():.1f}")
+    sparsity = (1 - len(ratings_df) / (ratings_df['userId'].nunique() * ratings_df['movieId'].nunique())) * 100
+    print(f"   Sparsity: {sparsity:.2f}%")
 
-# Display data samples
-print("\n📋 Ratings Data Sample (first 10 rows):")
-print(ratings_df.head(10))
+    # Display data samples
+    print("\n📋 Ratings Data Sample (first 10 rows):")
+    print(ratings_df.head(10))
 
-print("\n🎥 Movies Data Sample (first 10 rows):")
-print(movies_df.head(10))
+    print("\n🎥 Movies Data Sample (first 10 rows):")
+    print(movies_df.head(10))
 
-# Visualizations
-fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    # Visualizations
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-# Rating distribution with half-star increments
-axes[0].hist(ratings_df['rating'], bins=20, edgecolor='black', alpha=0.7, color='steelblue')
-axes[0].set_title('Rating Distribution\n(0.5-5.0 stars)', fontweight='bold')
-axes[0].set_xlabel('Rating')
-axes[0].set_ylabel('Frequency')
-axes[0].axvline(x=ratings_df['rating'].mean(), color='red', linestyle='--', 
-                label=f"Mean: {ratings_df['rating'].mean():.2f}")
-axes[0].legend()
+    # Rating distribution with half-star increments
+    axes[0].hist(ratings_df['rating'], bins=20, edgecolor='black', alpha=0.7, color='steelblue')
+    axes[0].set_title('Rating Distribution\n(0.5-5.0 stars)', fontweight='bold')
+    axes[0].set_xlabel('Rating')
+    axes[0].set_ylabel('Frequency')
+    axes[0].axvline(x=ratings_df['rating'].mean(), color='red', linestyle='--', 
+                    label=f"Mean: {ratings_df['rating'].mean():.2f}")
+    axes[0].legend()
 
-# Most-rated movies
-movie_ratings_count = ratings_df['movieId'].value_counts().head(10)
-# Check if movie IDs exist in movies_df
-valid_movie_ids = movie_ratings_count.index[movie_ratings_count.index.isin(movies_df['movieId'])]
-if len(valid_movie_ids) > 0:
-    top_movies = movies_df.set_index('movieId').loc[valid_movie_ids, 'title'].values
-    movie_counts = movie_ratings_count[valid_movie_ids]
-else:
-    top_movies = ['Unknown'] * 10
-    movie_counts = [0] * 10
+    # Most-rated movies
+    movie_ratings_count = ratings_df['movieId'].value_counts().head(10)
+    # Check if movie IDs exist in movies_df
+    valid_movie_ids = movie_ratings_count.index[movie_ratings_count.index.isin(movies_df['movieId'])]
+    if len(valid_movie_ids) > 0:
+        top_movies = movies_df.set_index('movieId').loc[valid_movie_ids, 'title'].values
+        movie_counts = movie_ratings_count[valid_movie_ids]
+    else:
+        top_movies = ['Unknown'] * 10
+        movie_counts = [0] * 10
 
-axes[1].barh(range(len(top_movies)), movie_counts.values, color='coral', alpha=0.7)
-axes[1].set_title('Top 10 Most-Rated Movies', fontweight='bold')
-axes[1].set_xlabel('Number of Ratings')
-axes[1].set_yticks(range(len(top_movies)))
-axes[1].set_yticklabels([title[:30] + '...' if len(title) > 30 else title for title in top_movies], fontsize=8)
+    axes[1].barh(range(len(top_movies)), movie_counts.values, color='coral', alpha=0.7)
+    axes[1].set_title('Top 10 Most-Rated Movies', fontweight='bold')
+    axes[1].set_xlabel('Number of Ratings')
+    axes[1].set_yticks(range(len(top_movies)))
+    axes[1].set_yticklabels([title[:30] + '...' if len(title) > 30 else title for title in top_movies], fontsize=8)
 
-# Most active users
-user_ratings_count = ratings_df['userId'].value_counts().head(10)
-axes[2].bar(range(10), user_ratings_count.values, color='green', alpha=0.7)
-axes[2].set_title('Top 10 Most Active Users', fontweight='bold')
-axes[2].set_xlabel('User ID')
-axes[2].set_ylabel('Number of Ratings')
-axes[2].set_xticks(range(10))
-axes[2].set_xticklabels(user_ratings_count.index, rotation=45)
+    # Most active users
+    user_ratings_count = ratings_df['userId'].value_counts().head(10)
+    axes[2].bar(range(10), user_ratings_count.values, color='green', alpha=0.7)
+    axes[2].set_title('Top 10 Most Active Users', fontweight='bold')
+    axes[2].set_xlabel('User ID')
+    axes[2].set_ylabel('Number of Ratings')
+    axes[2].set_xticks(range(10))
+    axes[2].set_xticklabels(user_ratings_count.index, rotation=45)
 
-plt.tight_layout()
-plt.savefig('data_exploration.png', dpi=150, bbox_inches='tight')
-plt.show()
+    plt.tight_layout()
+    plt.savefig('data_exploration.png', dpi=150, bbox_inches='tight')
+    plt.show()
 
-print("\n📊 Summary Statistics for Ratings:")
-print(ratings_df['rating'].describe())
-if 'timestamp' in ratings_df.columns:
-    print(f"\n📅 Rating period: {pd.to_datetime(ratings_df['timestamp'].min(), unit='s').date()} to {pd.to_datetime(ratings_df['timestamp'].max(), unit='s').date()}")
+    print("\n📊 Summary Statistics for Ratings:")
+    print(ratings_df['rating'].describe())
+    if 'timestamp' in ratings_df.columns:
+        print(f"\n📅 Rating period: {pd.to_datetime(ratings_df['timestamp'].min(), unit='s').date()} to {pd.to_datetime(ratings_df['timestamp'].max(), unit='s').date()}")
 
 # ============================================
 # PART B: Data Preprocessing (10 Marks)
 # ============================================
-print("\n" + "="*60)
-print("PART B: DATA PREPROCESSING")
-print("="*60)
+if __name__ == '__main__':
+    print("\n" + "="*60)
+    print("PART B: DATA PREPROCESSING")
+    print("="*60)
 
 def preprocess_data(ratings_df):
     """Handle missing values, duplicates, and create user-item matrix"""
@@ -256,18 +309,20 @@ def preprocess_data(ratings_df):
     
     return ratings_df, user_item_matrix, user_item_matrix_filled
 
-ratings_df_clean, user_item_matrix, user_item_matrix_filled = preprocess_data(ratings_df)
+if __name__ == '__main__':
+    ratings_df_clean, user_item_matrix, user_item_matrix_filled = preprocess_data(ratings_df)
 
-# Save preprocessed data for reuse
-save_user_item_matrix(user_item_matrix, 'user_item_matrix')
-save_user_item_matrix(user_item_matrix_filled, 'user_item_matrix_filled')
+    # Save preprocessed data for reuse
+    save_user_item_matrix(user_item_matrix, 'user_item_matrix')
+    save_user_item_matrix(user_item_matrix_filled, 'user_item_matrix_filled')
 
 # ============================================
 # PART C: User-Based Collaborative Filtering (20 Marks)
 # ============================================
-print("\n" + "="*60)
-print("PART C: USER-BASED COLLABORATIVE FILTERING")
-print("="*60)
+if __name__ == '__main__':
+    print("\n" + "="*60)
+    print("PART C: USER-BASED COLLABORATIVE FILTERING")
+    print("="*60)
 
 class UserBasedCF:
     def __init__(self, user_item_matrix, k=10):
@@ -380,42 +435,44 @@ class UserBasedCF:
         top_recommendations = sorted(predicted_ratings.items(), key=lambda x: x[1], reverse=True)[:n_recommendations]
         return top_recommendations
 
-# Check for existing saved models
-print("\n🔍 Checking for saved models...")
-existing_cosine = load_similarity_matrix('user_cosine_similarity')
-existing_pearson = load_similarity_matrix('user_pearson_similarity')
-existing_item_sim = load_similarity_matrix('item_similarity')
+if __name__ == '__main__':
+    # Check for existing saved models
+    print("\n🔍 Checking for saved models...")
+    existing_cosine = load_similarity_matrix('user_cosine_similarity')
+    existing_pearson = load_similarity_matrix('user_pearson_similarity')
+    existing_item_sim = load_similarity_matrix('item_similarity')
 
-# Initialize User-Based CF
-user_cf = UserBasedCF(user_item_matrix)
+    # Initialize User-Based CF
+    user_cf = UserBasedCF(user_item_matrix)
 
-if existing_cosine is not None and existing_cosine.shape[0] == user_item_matrix.shape[0]:
-    user_cf.user_similarity_cosine = existing_cosine
-    print("✅ Loaded existing user cosine similarity matrix")
-else:
-    user_cf.compute_cosine_similarity()
-    save_similarity_matrix(user_cf.user_similarity_cosine, 'user_cosine_similarity')
+    if existing_cosine is not None and existing_cosine.shape[0] == user_item_matrix.shape[0]:
+        user_cf.user_similarity_cosine = existing_cosine
+        print("✅ Loaded existing user cosine similarity matrix")
+    else:
+        user_cf.compute_cosine_similarity()
+        save_similarity_matrix(user_cf.user_similarity_cosine, 'user_cosine_similarity')
 
-# Example for a sample user
-target_user = user_item_matrix.index[0]
-if target_user in user_item_matrix.index:
-    similar_users, scores = user_cf.get_similar_users(target_user, method='cosine')
-    print(f"\nTop 5 similar users to User {target_user}:")
-    for user, score in zip(similar_users, scores):
-        print(f"  User {user}: Similarity = {score:.3f}")
+    # Example for a sample user
+    target_user = user_item_matrix.index[0]
+    if target_user in user_item_matrix.index:
+        similar_users, scores = user_cf.get_similar_users(target_user, method='cosine')
+        print(f"\nTop 5 similar users to User {target_user}:")
+        for user, score in zip(similar_users, scores):
+            print(f"  User {user}: Similarity = {score:.3f}")
     
-    recommendations = user_cf.recommend(target_user, method='cosine', n_recommendations=10)
-    print(f"\n🎬 Top 10 recommendations for User {target_user}:")
-    for movie_id, pred_rating in recommendations:
-        movie_title = movies_df[movies_df['movieId'] == movie_id]['title'].values[0] if movie_id in movies_df['movieId'].values else f"Movie {movie_id}"
-        print(f"  {movie_title}: Predicted Rating = {pred_rating:.2f}")
+        recommendations = user_cf.recommend(target_user, method='cosine', n_recommendations=10)
+        print(f"\n🎬 Top 10 recommendations for User {target_user}:")
+        for movie_id, pred_rating in recommendations:
+            movie_title = movies_df[movies_df['movieId'] == movie_id]['title'].values[0] if movie_id in movies_df['movieId'].values else f"Movie {movie_id}"
+            print(f"  {movie_title}: Predicted Rating = {pred_rating:.2f}")
 
 # ============================================
 # PART D: Item-Based Collaborative Filtering (20 Marks)
 # ============================================
-print("\n" + "="*60)
-print("PART D: ITEM-BASED COLLABORATIVE FILTERING")
-print("="*60)
+if __name__ == '__main__':
+    print("\n" + "="*60)
+    print("PART D: ITEM-BASED COLLABORATIVE FILTERING")
+    print("="*60)
 
 class ItemBasedCF:
     def __init__(self, user_item_matrix, k=10):
@@ -468,36 +525,38 @@ class ItemBasedCF:
         top_recommendations = sorted(predicted_ratings.items(), key=lambda x: x[1], reverse=True)[:n_recommendations]
         return top_recommendations
 
-# Initialize and run Item-Based CF
-item_cf = ItemBasedCF(user_item_matrix)
+if __name__ == '__main__':
+    # Initialize and run Item-Based CF
+    item_cf = ItemBasedCF(user_item_matrix)
 
-if existing_item_sim is not None and existing_item_sim.shape[0] == user_item_matrix.shape[1]:
-    item_cf.item_item_similarity = existing_item_sim
-    print("✅ Loaded existing item similarity matrix")
-else:
-    item_cf.compute_item_similarity()
-    save_similarity_matrix(item_cf.item_item_similarity, 'item_similarity')
+    if existing_item_sim is not None and existing_item_sim.shape[0] == user_item_matrix.shape[1]:
+        item_cf.item_item_similarity = existing_item_sim
+        print("✅ Loaded existing item similarity matrix")
+    else:
+        item_cf.compute_item_similarity()
+        save_similarity_matrix(item_cf.item_item_similarity, 'item_similarity')
 
-if target_user in user_item_matrix.index:
-    item_recommendations = item_cf.recommend(target_user, n_recommendations=10)
-    print(f"\n🎬 Item-Based CF - Top 10 recommendations for User {target_user}:")
-    for movie_id, pred_rating in item_recommendations:
-        movie_title = movies_df[movies_df['movieId'] == movie_id]['title'].values[0] if movie_id in movies_df['movieId'].values else f"Movie {movie_id}"
-        print(f"  {movie_title}: Predicted Rating = {pred_rating:.2f}")
+    if target_user in user_item_matrix.index:
+        item_recommendations = item_cf.recommend(target_user, n_recommendations=10)
+        print(f"\n🎬 Item-Based CF - Top 10 recommendations for User {target_user}:")
+        for movie_id, pred_rating in item_recommendations:
+            movie_title = movies_df[movies_df['movieId'] == movie_id]['title'].values[0] if movie_id in movies_df['movieId'].values else f"Movie {movie_id}"
+            print(f"  {movie_title}: Predicted Rating = {pred_rating:.2f}")
     
-    user_rec_movies = set(m for m, _ in recommendations)
-    item_rec_movies = set(m for m, _ in item_recommendations)
-    print("\n📊 Comparison of User-Based vs Item-Based CF:")
-    print(f"   User-Based unique recommendations: {len(user_rec_movies - item_rec_movies)}")
-    print(f"   Item-Based unique recommendations: {len(item_rec_movies - user_rec_movies)}")
-    print(f"   Common recommendations: {len(user_rec_movies & item_rec_movies)}")
+        user_rec_movies = set(m for m, _ in recommendations)
+        item_rec_movies = set(m for m, _ in item_recommendations)
+        print("\n📊 Comparison of User-Based vs Item-Based CF:")
+        print(f"   User-Based unique recommendations: {len(user_rec_movies - item_rec_movies)}")
+        print(f"   Item-Based unique recommendations: {len(item_rec_movies - user_rec_movies)}")
+        print(f"   Common recommendations: {len(user_rec_movies & item_rec_movies)}")
 
 # ============================================
 # PART E: Model Evaluation (15 Marks)
 # ============================================
-print("\n" + "="*60)
-print("PART E: MODEL EVALUATION")
-print("="*60)
+if __name__ == '__main__':
+    print("\n" + "="*60)
+    print("PART E: MODEL EVALUATION")
+    print("="*60)
 
 def evaluate_model(model_type, user_item_matrix, test_ratings, k=10):
     """Evaluate recommendation model using RMSE, MAE, Precision@K, Recall@K"""
@@ -565,47 +624,49 @@ def evaluate_model(model_type, user_item_matrix, test_ratings, k=10):
         'Recall@10': avg_recall
     }
 
-# Split data into training and testing
-print("\nSplitting data: 80% Training, 20% Testing")
-train_ratings, test_ratings = train_test_split(ratings_df_clean, test_size=0.2, random_state=42)
+if __name__ == '__main__':
+    # Split data into training and testing
+    print("\nSplitting data: 80% Training, 20% Testing")
+    train_ratings, test_ratings = train_test_split(ratings_df_clean, test_size=0.2, random_state=42)
 
-# Create training user-item matrix
-train_user_item_matrix = train_ratings.pivot_table(
-    index='userId', 
-    columns='movieId', 
-    values='rating',
-    aggfunc='mean'
-)
+    # Create training user-item matrix
+    train_user_item_matrix = train_ratings.pivot_table(
+        index='userId', 
+        columns='movieId', 
+        values='rating',
+        aggfunc='mean'
+    )
 
-print(f"Training set: {len(train_ratings)} ratings")
-print(f"Testing set: {len(test_ratings)} ratings")
+    print(f"Training set: {len(train_ratings)} ratings")
+    print(f"Testing set: {len(test_ratings)} ratings")
 
-# Evaluate User-Based CF
-print("\nEvaluating User-Based Collaborative Filtering...")
-user_cf_metrics = evaluate_model('user', train_user_item_matrix, test_ratings, k=10)
+    # Evaluate User-Based CF
+    print("\nEvaluating User-Based Collaborative Filtering...")
+    user_cf_metrics = evaluate_model('user', train_user_item_matrix, test_ratings, k=10)
 
-# Evaluate Item-Based CF
-print("\nEvaluating Item-Based Collaborative Filtering...")
-item_cf_metrics = evaluate_model('item', train_user_item_matrix, test_ratings, k=10)
+    # Evaluate Item-Based CF
+    print("\nEvaluating Item-Based Collaborative Filtering...")
+    item_cf_metrics = evaluate_model('item', train_user_item_matrix, test_ratings, k=10)
 
-# Create performance table
-performance_df = pd.DataFrame({
-    'Method': ['User-Based CF', 'Item-Based CF'],
-    'RMSE': [f"{user_cf_metrics['RMSE']:.4f}", f"{item_cf_metrics['RMSE']:.4f}"],
-    'MAE': [f"{user_cf_metrics['MAE']:.4f}", f"{item_cf_metrics['MAE']:.4f}"],
-    'Precision@10': [f"{user_cf_metrics['Precision@10']:.4f}", f"{item_cf_metrics['Precision@10']:.4f}"],
-    'Recall@10': [f"{user_cf_metrics['Recall@10']:.4f}", f"{item_cf_metrics['Recall@10']:.4f}"]
-})
+    # Create performance table
+    performance_df = pd.DataFrame({
+        'Method': ['User-Based CF', 'Item-Based CF'],
+        'RMSE': [f"{user_cf_metrics['RMSE']:.4f}", f"{item_cf_metrics['RMSE']:.4f}"],
+        'MAE': [f"{user_cf_metrics['MAE']:.4f}", f"{item_cf_metrics['MAE']:.4f}"],
+        'Precision@10': [f"{user_cf_metrics['Precision@10']:.4f}", f"{item_cf_metrics['Precision@10']:.4f}"],
+        'Recall@10': [f"{user_cf_metrics['Recall@10']:.4f}", f"{item_cf_metrics['Recall@10']:.4f}"]
+    })
 
-print("\n📊 Performance Comparison Table:")
-print(performance_df.to_string(index=False))
+    print("\n📊 Performance Comparison Table:")
+    print(performance_df.to_string(index=False))
 
 # ============================================
 # PART F: Advanced Method - Matrix Factorization (SVD) (15 Marks)
 # ============================================
-print("\n" + "="*60)
-print("PART F: MATRIX FACTORIZATION USING SVD")
-print("="*60)
+if __name__ == '__main__':
+    print("\n" + "="*60)
+    print("PART F: MATRIX FACTORIZATION USING SVD")
+    print("="*60)
 
 class SVDRecommender:
     def __init__(self, user_item_matrix, n_factors=20, n_iterations=50, learning_rate=0.01, regularization=0.1):
@@ -738,59 +799,71 @@ class SVDRecommender:
         self.training_rmse = params['training_rmse']
         self.user_item_matrix = params['user_item_matrix']
 
-# Check for existing SVD model
-print("\n🔍 Checking for saved SVD model...")
-svd_model = load_model('svd_recommender')
+if __name__ == '__main__':
+    # Check for existing SVD model
+    print("\n🔍 Checking for saved SVD model...")
+    svd_model = load_model('svd_recommender')
 
-if svd_model is not None:
-    # Verify dimensions match current train_user_item_matrix
-    if svd_model.user_factors is not None and svd_model.user_factors.shape[0] == train_user_item_matrix.shape[0] and svd_model.item_factors.shape[0] == train_user_item_matrix.shape[1]:
-        print("✅ Loaded existing SVD model")
-        # Ensure user_item_matrix is set correctly
-        svd_model.user_item_matrix = train_user_item_matrix
-    else:
-        print("⚠️ Saved SVD model dimensions mismatch. Re-training...")
-        svd_model = None
+    if svd_model is not None:
+        # Verify dimensions match current train_user_item_matrix
+        if svd_model.user_factors is not None and svd_model.user_factors.shape[0] == train_user_item_matrix.shape[0] and svd_model.item_factors.shape[0] == train_user_item_matrix.shape[1]:
+            print("✅ Loaded existing SVD model")
+            # Ensure user_item_matrix is set correctly
+            svd_model.user_item_matrix = train_user_item_matrix
+        else:
+            print("⚠️ Saved SVD model dimensions mismatch. Re-training...")
+            svd_model = None
 
-if svd_model is None:
-    print("Training new SVD model...")
-    svd_model = SVDRecommender(train_user_item_matrix, n_factors=15, n_iterations=30, learning_rate=0.005, regularization=0.02)
-    svd_model.fit()
-    save_model(svd_model, 'svd_recommender')
+    if svd_model is None:
+        print("Training new SVD model...")
+        svd_model = SVDRecommender(train_user_item_matrix, n_factors=15, n_iterations=30, learning_rate=0.005, regularization=0.02)
+        svd_model.fit()
+        save_model(svd_model, 'svd_recommender')
 
-# Get recommendations for SVD
-print(f"\n🎬 SVD Recommendations for User {target_user}:")
-if target_user in train_user_item_matrix.index:
-    svd_recs = svd_model.recommend(target_user, n_recommendations=10)
-    for movie_id, pred_rating in svd_recs:
-        movie_title = movies_df[movies_df['movieId'] == movie_id]['title'].values[0] if movie_id in movies_df['movieId'].values else f"Movie {movie_id}"
-        print(f"  {movie_title}: Predicted Rating = {pred_rating:.2f}")
+    # Get recommendations for SVD
+    print(f"\n🎬 SVD Recommendations for User {target_user}:")
+    if target_user in train_user_item_matrix.index:
+        svd_recs = svd_model.recommend(target_user, n_recommendations=10)
+        for movie_id, pred_rating in svd_recs:
+            movie_title = movies_df[movies_df['movieId'] == movie_id]['title'].values[0] if movie_id in movies_df['movieId'].values else f"Movie {movie_id}"
+            print(f"  {movie_title}: Predicted Rating = {pred_rating:.2f}")
 
 # ============================================
 # PART G: Dashboard Functions (10 Marks)
 # ============================================
-print("\n" + "="*60)
-print("PART G: RECOMMENDATION DASHBOARD")
-print("="*60)
+if __name__ == '__main__':
+    print("\n" + "="*60)
+    print("PART G: RECOMMENDATION DASHBOARD")
+    print("="*60)
 
-def get_recommendations_for_user(user_id, method='user'):
+def get_recommendations_for_user(user_id, method='user', n_recommendations=10):
     """Get recommendations for a specific user using specified method"""
     try:
+        load_resources()
         user_id = int(user_id)
         if user_id not in train_user_item_matrix.index:
-            return "User not found!", pd.DataFrame()
+            return f"User {user_id} not found!", pd.DataFrame()
         
         if method == 'user':
             cf = UserBasedCF(train_user_item_matrix)
-            recs = cf.recommend(user_id, n_recommendations=10)
+            recs = cf.recommend(user_id, n_recommendations=n_recommendations)
             method_name = "User-Based CF"
         elif method == 'item':
             cf = ItemBasedCF(train_user_item_matrix)
-            recs = cf.recommend(user_id, n_recommendations=10)
+            recs = cf.recommend(user_id, n_recommendations=n_recommendations)
             method_name = "Item-Based CF"
-        else:  # SVD
-            recs = svd_model.recommend(user_id, n_recommendations=10)
+        elif method == 'svd':
+            if svd_model is None:
+                return "SVD model not loaded/trained!", pd.DataFrame()
+            recs = svd_model.recommend(user_id, n_recommendations=n_recommendations)
             method_name = "SVD"
+        elif method == 'hybrid':
+            if hybrid_model is None:
+                return "Hybrid model not loaded/trained!", pd.DataFrame()
+            recs = hybrid_model.recommend(user_id, n_recommendations=n_recommendations)
+            method_name = "Hybrid Recommender"
+        else:
+            return f"Unknown recommendation method: {method}", pd.DataFrame()
         
         results = []
         for movie_id, pred_rating in recs:
@@ -799,7 +872,7 @@ def get_recommendations_for_user(user_id, method='user'):
             results.append({
                 'Movie': movie_title,
                 'Genre': genre,
-                'Predicted Rating': f"{pred_rating:.1f}"
+                'Predicted Rating': float(pred_rating)
             })
         
         df = pd.DataFrame(results)
@@ -807,15 +880,17 @@ def get_recommendations_for_user(user_id, method='user'):
     except Exception as e:
         return f"Error: {str(e)}", pd.DataFrame()
 
-print("\nDashboard Functions Ready!")
-print("Available methods: 'user' (User-Based CF), 'item' (Item-Based CF), 'svd' (SVD)")
+if __name__ == '__main__':
+    print("\nDashboard Functions Ready!")
+    print("Available methods: 'user' (User-Based CF), 'item' (Item-Based CF), 'svd' (SVD)")
 
 # ============================================
 # BONUS: Hybrid Recommender System (+10 Marks)
 # ============================================
-print("\n" + "="*60)
-print("BONUS: HYBRID RECOMMENDER SYSTEM")
-print("="*60)
+if __name__ == '__main__':
+    print("\n" + "="*60)
+    print("BONUS: HYBRID RECOMMENDER SYSTEM")
+    print("="*60)
 
 class HybridRecommender:
     def __init__(self, user_cf, item_cf, svd_model, weights=[0.35, 0.35, 0.3]):
@@ -856,81 +931,82 @@ class HybridRecommender:
         sorted_items = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
         return sorted_items[:n_recommendations]
 
-# Initialize individual recommenders
-user_cf_model = UserBasedCF(train_user_item_matrix)
-user_cf_model.compute_cosine_similarity()
-item_cf_model = ItemBasedCF(train_user_item_matrix)
-item_cf_model.compute_item_similarity()
+if __name__ == '__main__':
+    # Initialize individual recommenders
+    user_cf_model = UserBasedCF(train_user_item_matrix)
+    user_cf_model.compute_cosine_similarity()
+    item_cf_model = ItemBasedCF(train_user_item_matrix)
+    item_cf_model.compute_item_similarity()
 
-# Create hybrid recommender
-hybrid_model = HybridRecommender(user_cf_model, item_cf_model, svd_model)
+    # Create hybrid recommender
+    hybrid_model = HybridRecommender(user_cf_model, item_cf_model, svd_model)
 
-# Save hybrid model
-save_model(hybrid_model, 'hybrid_recommender')
+    # Save hybrid model
+    save_model(hybrid_model, 'hybrid_recommender')
 
-# Get hybrid recommendations
-print(f"\n🎬 Hybrid Recommendations for User {target_user}:")
-if target_user in train_user_item_matrix.index:
-    hybrid_recs = hybrid_model.recommend(target_user, n_recommendations=10)
-    for movie_id, pred_rating in hybrid_recs:
-        movie_title = movies_df[movies_df['movieId'] == movie_id]['title'].values[0] if movie_id in movies_df['movieId'].values else f"Movie {movie_id}"
-        print(f"  {movie_title}: Combined Score = {pred_rating:.2f}")
+    # Get hybrid recommendations
+    print(f"\n🎬 Hybrid Recommendations for User {target_user}:")
+    if target_user in train_user_item_matrix.index:
+        hybrid_recs = hybrid_model.recommend(target_user, n_recommendations=10)
+        for movie_id, pred_rating in hybrid_recs:
+            movie_title = movies_df[movies_df['movieId'] == movie_id]['title'].values[0] if movie_id in movies_df['movieId'].values else f"Movie {movie_id}"
+            print(f"  {movie_title}: Combined Score = {pred_rating:.2f}")
 
-# ============================================
-# MODEL MANAGEMENT SUMMARY
-# ============================================
-print("\n" + "="*60)
-print("MODEL PERSISTENCE SUMMARY")
-print("="*60)
-list_saved_models()
+    # ============================================
+    # MODEL MANAGEMENT SUMMARY
+    # ============================================
+    print("\n" + "="*60)
+    print("MODEL PERSISTENCE SUMMARY")
+    print("="*60)
+    list_saved_models()
 
-print("\n📝 Model Management Functions Available:")
-print("""
-   save_model(model, name)          - Save any trained model
-   load_model(name)                 - Load a saved model
-   save_similarity_matrix(mat, name)- Save similarity matrices
-   load_similarity_matrix(name)     - Load similarity matrices
-   save_user_item_matrix(mat, name) - Save user-item matrices
-   load_user_item_matrix(name)      - Load user-item matrices
-   list_saved_models()              - List all saved models
-""")
+    print("\n📝 Model Management Functions Available:")
+    print("""
+       save_model(model, name)          - Save any trained model
+       load_model(name)                 - Load a saved model
+       save_similarity_matrix(mat, name)- Save similarity matrices
+       load_similarity_matrix(name)     - Load similarity matrices
+       save_user_item_matrix(mat, name) - Save user-item matrices
+       load_user_item_matrix(name)      - Load user-item matrices
+       list_saved_models()              - List all saved models
+    """)
 
-# ============================================
-# Final Summary
-# ============================================
-print("\n" + "="*60)
-print("ASSIGNMENT SUMMARY")
-print("="*60)
-print("""
-Parts Completed:
-✓ Part A: Data Exploration (10 marks)
-✓ Part B: Data Preprocessing (10 marks)
-✓ Part C: User-Based Collaborative Filtering (20 marks)
-✓ Part D: Item-Based Collaborative Filtering (20 marks)
-✓ Part E: Model Evaluation (15 marks)
-✓ Part F: Advanced Method - SVD (15 marks)
-✓ Part G: Dashboard Implementation (10 marks)
-✓ Bonus: Hybrid Recommender System (+10 marks)
-✓ Model Persistence: Save/Load trained models
+    # ============================================
+    # Final Summary
+    # ============================================
+    print("\n" + "="*60)
+    print("ASSIGNMENT SUMMARY")
+    print("="*60)
+    print("""
+    Parts Completed:
+    ✓ Part A: Data Exploration (10 marks)
+    ✓ Part B: Data Preprocessing (10 marks)
+    ✓ Part C: User-Based Collaborative Filtering (20 marks)
+    ✓ Part D: Item-Based Collaborative Filtering (20 marks)
+    ✓ Part E: Model Evaluation (15 marks)
+    ✓ Part F: Advanced Method - SVD (15 marks)
+    ✓ Part G: Dashboard Implementation (10 marks)
+    ✓ Bonus: Hybrid Recommender System (+10 marks)
+    ✓ Model Persistence: Save/Load trained models
 
-Dataset: MovieLens Latest (33M+ ratings, 86K+ movies, 330K+ users)
-Rating Scale: 0.5 - 5.0 stars (half-star increments)
+    Dataset: MovieLens Latest (33M+ ratings, 86K+ movies, 330K+ users)
+    Rating Scale: 0.5 - 5.0 stars (half-star increments)
 
-Total Marks: 100/100
-Bonus: +10 marks for Hybrid System
+    Total Marks: 100/100
+    Bonus: +10 marks for Hybrid System
 
-Models are saved in: saved_models/
-   - user_cosine_similarity.npz
-   - item_similarity.npz
-   - svd_recommender.joblib
-   - hybrid_recommender.joblib
-   - user_item_matrix.pkl
+    Models are saved in: saved_models/
+       - user_cosine_similarity.npz
+       - item_similarity.npz
+       - svd_recommender.joblib
+       - hybrid_recommender.joblib
+       - user_item_matrix.pkl
 
-For Streamlit dashboard:
-   pip install streamlit
-   streamlit run app.py
-""")
+    For Streamlit dashboard:
+       pip install streamlit
+       streamlit run app.py
+    """)
 
-print("\n✅ Program completed successfully!")
-print("📁 Output files: data_exploration.png")
-print("📁 Saved models: saved_models/")
+    print("\n✅ Program completed successfully!")
+    print("📁 Output files: data_exploration.png")
+    print("📁 Saved models: saved_models/")

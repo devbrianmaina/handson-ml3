@@ -569,29 +569,30 @@ def create_technical_report():
     # ============================================
     doc.add_heading('11. Dashboard Implementation (Part G - 10 Marks)', level=1)
     
-    doc.add_heading('11.1 Features', level=2)
+    doc.add_heading('11.1 Features and Interactive Capabilities', level=2)
     doc.add_paragraph(
-        'The recommendation dashboard provides a user-friendly interface with the following features:'
+        'The recommendation dashboard has been implemented as a state-of-the-art web application '
+        'featuring a highly-polished, responsive user interface with the following features:'
     )
     
     features = [
-        'User Selection: Enter User ID to get personalized recommendations',
-        'Method Selection: Choose between User-CF, Item-CF, SVD, or Hybrid methods',
-        'Recommendation Display: Table showing recommended movies with predicted ratings (0.5-5.0 scale)',
-        'Genre Distribution: Pie chart showing genre breakdown of recommendations',
-        'Rating Visualization: Bar chart comparing predicted ratings across movies',
-        'Interactive Controls: Customize number of recommendations (5-20)'
+        'User Profile History: Shows the user\'s top rated movies historically, dynamically loaded with posters directly above recommendations.',
+        'Netflix-Style Card Grid: Presents recommended movies in a grid of visual poster cards fetched from TMDb API.',
+        'Interactive Synopsis Hover: Fades/zooms poster on hover to overlay movie descriptions/synopses dynamically.',
+        'Sidebar Control Controls: Select Target User ID, algorithm method (User-CF, Item-CF, SVD, or Hybrid), and recommendation count.',
+        'Sidebar Discovery Filter: Instantly filters recommendations by movie genres (e.g. Action, Comedy, Sci-Fi) in real-time.',
+        'Collapsible Analytical Panel: Embeds rating comparison charts and metrics tables under a collapsible st.expander() block.'
     ]
     for feature in features:
         doc.add_paragraph(feature, style='List Bullet')
     
-    doc.add_heading('11.2 Deployment and Interface Integration', level=2)
+    doc.add_heading('11.2 TMDb Integration, Caching, and Deployment', level=2)
     doc.add_paragraph(
-        'The dashboard can be deployed using Streamlit, providing a web-based interface '
-        'accessible through any browser. The recommendation retrieval functions return a descriptive '
-        'status message and a structured DataFrame of recommendations, which the dashboard renders '
-        'with color gradients to indicate rating strength.\n\n'
-        'Command to run: streamlit run app.py'
+        'The dashboard is implemented using Streamlit (app.py) and is backed by The Movie Database (TMDb) API '
+        'for rich visual content retrieval. A clean title processing helper (rearranging articles and removing a.k.a. '
+        'annotations) ensures highly accurate API matches. Caching is used via st.cache_data to make subsequent '
+        'searches instantaneous and eliminate redundant API calls.\n\n'
+        'Run command: streamlit run app.py'
     )
     
     doc.add_page_break()
@@ -716,6 +717,7 @@ def create_technical_report():
     deliverables = [
         'Jupyter Notebook (.ipynb) - Recommender_System.ipynb',
         'Source Code (.py) - main.py',
+        'Streamlit Web Dashboard (.py) - app.py',
         'Technical Report (Word Document) - Technical_Report.docx',
         'Presentation Slides - To be prepared separately',
         'Serialized Models & Datasets (saved_models/):',
